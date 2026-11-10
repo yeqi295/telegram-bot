@@ -14,7 +14,8 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const WEBHOOK_URL = (process.env.WEBHOOK_URL || '').replace(/\/$/, '');
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 const POLLING = process.env.POLLING === 'true';
-const NEWS_RSS = process.env.NEWS_RSS || 'https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans';
+const NEWS_RSS = process.env.NEWS_RSS || 'https://www.animenewsnetwork.com/news/rss.xml';
+const NEWS_RSS_FALLBACK = 'https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans';
 
 const DATA_FILE = path.join(__dirname, 'data', 'library.json');
 const CATEGORIES = { galgame: 'Galgame', anime: '二次元', news: '新闻资讯'};
@@ -70,12 +71,15 @@ return ADMIN_ID!== '' && String(userId) === ADMIN_ID;
 }
 
 async function fetchNews() {
+const sources = [NEWS_RSS, NEWS_RSS_FALLBACK];
+let lastError = '';
+for (const src of sources) {
 try {
-const res = await fetch(NEWS_RSS, { headers: { 'User-Agent': 'Mozilla/5.0'}, signal: AbortSignal.timeout(10000)});
-if (!res.ok) return { error: `RSS 源返回 HTTP ${res.status}`};
+const res = await fetch(src, { headers: { 'User-Agent': 'Mozilla/5.0'}, signal: AbortSignal.timeout(10000)});
+if (!res.ok) { lastError = `RSS 源返回 HTTP ${res.status}`; continue; }
 const xml = await res.text();
 const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 5);
-if (items.length === 0) return { error: 'RSS 源没有可读的新闻条目'};
+if (items.length === 0) { lastError = 'RSS 源没有可读的新闻条目'; continue; }
 const out = items.map((m) => {
 const title = (m[1].match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/) || [])[1] || '（无标题）';
 const link = (m[1].match(/<link>([\s\S]*?)<\/link>/) || [])[1] || '';
@@ -83,8 +87,10 @@ return `• ${title.trim()}\n${link.trim()}`;
 });
 return { items: out};
 } catch (e) {
-return { error: `拉取新闻失败：${e.message}`};
+lastError = `拉取新闻失败：${e.message}`;
 }
+}
+return { error: lastError || '新闻拉取失败'};
 }
 
 async function handleMessage(msg) {
@@ -102,7 +108,7 @@ return sendMessage(chatId,
 '📦 资源百宝库\n\n' +
 '这是你自己的资源库机器人，只搜你亲手存进来的链接。\n\n' +
 '🔍 /search <关键词> —— 按名字/标签搜资源\n' +
-'📰 /news —— 最新新闻头条（公开 RSS）\n' +
+'📰 /news —— 最新二次元新闻（自动更新，不用手动加）\n' +
 '📋 /list [分类] —— 最近 10 条（分类：galgame / anime / news）\n\n' +
 '管理员命令：\n' +
 '➕ /add <分类> <标题> | <链接> —— 添加资源\n' +
@@ -138,7 +144,7 @@ return sendMessage(chatId, `📋 最近 ${rows.length} 条：\n\n` + rows.map(fm
 if (cmd === '/news') {
 const r = await fetchNews();
 if (r.error) return sendMessage(chatId, `📰 新闻拉取失败：${r.error}\n请稍后再试。`);
-return sendMessage(chatId, '📰 最新头条：\n\n' + r.items.join('\n\n'));
+return sendMessage(chatId, '📰 最新二次元新闻：\n\n' + r.items.join('\n\n'));
 }
 
 if (cmd === '/add') {
